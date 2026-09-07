@@ -1,0 +1,110 @@
+"""
+Simple Paper Trading Bot — SMA Crossover Strategy
+====================================================
+Works for stocks AND crypto via Alpaca's free paper trading API.
+STRATEGY (beginner-friendly, well-known):
+- Compute a short moving average (SMA_FAST) and long moving average (SMA_SLOW)
+- BUY when SMA_FAST crosses ABOVE SMA_SLOW (momentum turning up)
+- SELL when SMA_FAST crosses BELOW SMA_SLOW (momentum turning down)
+- Only ever holds one position per symbol, sized as a fixed dollar amount.
+THIS TRADES FAKE MONEY (paper trading) ONLY, unless you deliberately swap
+the API base URL — see README.md.
+SETUP:
+1. Create a free account at https://alpaca.markets
+2. Get your Paper Trading API key + secret from the dashboard
+3. pip install alpaca-py pandas
+4. Set the environment variables below (or edit them directly)
+5. python trading_bot.py
+This script polls once per run. Use a scheduler (cron, GitHub Actions,
+or a cheap always-on server) to run it every N minutes — see README.md
+for why this can't just live on your phone.
+"""
+import os
+import time
+import logging
+from datetime import datetime, timedelta
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
+from alpaca.data.timeframe import TimeFrame
+# ---------------------- CONFIG ----------------------
+API_KEY = os.environ.get("ALPACA_API_KEY", "YOUR_PAPER_API_KEY")
+API_SECRET = os.environ.get("ALPACA_API_SECRET", "YOUR_PAPER_API_SECRET")
+# Mix stocks and crypto freely. Crypto symbols use the "/" format Alpaca expects.
+SYMBOLS = ["AAPL", "MSFT", "BTC/USD", "ETH/USD"]
+SMA_FAST = 20 SMA_SLOW = 50 TIMEFRAME = TimeFrame.Hour DOLLARS_PER_TRADE = 100 LOOKBACK_DAYS = 10 # fast moving average window (in bars)
+# slow moving average window (in bars)
+# bar size: Minute, Hour, Day, etc.
+# fixed $ amount per position
+# how much history to pull for the SMA calc
+logging.basicConfig(
+level=logging.INFO,
+format="%(asctime)s [%(levelname)s] %(message)s",
+)
+log = logging.getLogger("trading_bot")
+# ---------------------- CLIENTS ----------------------
+trading_client = TradingClient(API_KEY, API_SECRET, paper=True)
+stock_data_client = StockHistoricalDataClient(API_KEY, API_SECRET)
+crypto_data_client = CryptoHistoricalDataClient(API_KEY, API_SECRET)
+def is_crypto(symbol: str) -> bool:
+return "/" in symbol
+def get_bars(symbol: str):
+"""Fetch recent bars and return a list of closing prices, oldest first."""
+start = datetime.utcnow() - timedelta(days=LOOKBACK_DAYS)
+if is_crypto(symbol):
+req = CryptoBarsRequest(symbol_or_symbols=symbol, timeframe=TIMEFRAME, start=start)
+bars = crypto_data_client.get_crypto_bars(req).df
+else:
+req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TIMEFRAME, start=start)
+bars = stock_data_client.get_stock_bars(req).df
+if bars.empty:
+return []
+return bars["close"].tolist()
+def sma(values, window):
+if len(values) < window:
+return None
+return sum(values[-window:]) / window
+def get_position_qty(symbol: str) -> float:
+try:
+pos = trading_client.get_open_position(symbol.replace("/", ""))
+return float(pos.qty)
+except Exception:
+return 0.0
+def place_order(symbol: str, side: OrderSide, notional: float):
+order = MarketOrderRequest(
+symbol=symbol,
+notional=notional,
+side=side,
+time_in_force=TimeInForce.GTC if is_crypto(symbol) else TimeInForce.DAY,
+)
+result = trading_client.submit_order(order)
+log.info(f"Order submitted: {side.value} ~${notional} of {symbol} (id={result.id})")
+def check_symbol(symbol: str):
+closes = get_bars(symbol)
+fast = sma(closes, SMA_FAST)
+slow = sma(closes, SMA_SLOW)
+if fast is None or slow is None:
+log.info(f"{symbol}: not enough history yet ({len(closes)} bars)")
+return
+held_qty = get_position_qty(symbol)
+log.info(f"{symbol}: fast={fast:.2f} slow={slow:.2f} held_qty={held_qty}")
+if fast > slow and held_qty == 0:
+log.info(f"{symbol}: BUY signal (fast above slow)")
+place_order(symbol, OrderSide.BUY, DOLLARS_PER_TRADE)
+elif fast < slow and held_qty > 0:
+log.info(f"{symbol}: SELL signal (fast below slow) — closing position")
+trading_client.close_position(symbol.replace("/", ""))
+else:
+log.info(f"{symbol}: no action")
+def run_once():
+account = trading_client.get_account()
+log.info(f"Paper account equity: ${account.equity} | buying power: ${account.buying_power
+for symbol in SYMBOLS:
+try:
+check_symbol(symbol)
+except Exception as e:
+log.error(f"{symbol}: error — {e}")
+if __name__ == "__main__":
+run_once()
