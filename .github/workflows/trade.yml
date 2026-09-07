@@ -1,0 +1,62 @@
+Paper Trading Bot (SMA Crossover)
+A simple bot that trades fake money on Alpaca’s free paper trading platform, using a
+classic moving-average crossover strategy:
+Buys a symbol when its 20-period average price crosses above its 50-period average
+(momentum turning up)
+Sells when it crosses below (momentum turning down)
+Works on both stocks ( AAPL , MSFT , …) and crypto ( BTC/USD , ETH/USD , …)
+Why this can’t just “run on your phone”
+A trading bot needs to be checking prices and placing orders on a schedule, even when
+you’re not holding your phone, it’s locked, or it’s off wifi. Phones aren’t built to run
+background processes reliably like that. The realistic setups are:
+1. Cheapest / easiest: Run it for free on a schedule using GitHub Actions (a cron job in the
+cloud) — no server to manage.
+2. More control: Run it on a small always-on server (e.g. a $5/month VPS, or a free tier like
+PythonAnywhere).
+3. Simplest but manual: Run it locally on your computer whenever you remember to, or
+wire it up to send you a phone notification (e.g. via Telegram) and you execute trades
+manually in the Alpaca app.
+Either way, you’d check in and monitor performance from your phone via the Alpaca app (it
+has a mobile app that shows your paper portfolio) — the bot itself just needs somewhere
+else to actually run.
+Setup
+1. 2. Create a free account at alpaca.markets and switch to Paper Trading in the dashboard.
+Grab your Paper API Key + Secret from the dashboard.
+3. Install dependencies:
+pip install alpaca-py
+4. Set your credentials as environment variables (don’t hardcode them into the script if you
+ever share it):
+export ALPACA_API_KEY="your_key_here"
+export ALPACA_API_SECRET="your_secret_here"
+5. Edit SYMBOLS in trading_bot.py if you want different tickers.
+6. Run it once to test:
+python trading_bot.py
+Automating it (GitHub Actions example)
+Add .github/workflows/trade.yml to a repo containing this script:
+name: trading-bot
+on:
+schedule:
+- cron: "0 * * * *" # every hour
+workflow_dispatch: {}
+jobs:
+run-bot:
+runs-on: ubuntu-latest
+steps:
+- uses: actions/checkout@v4
+- uses: actions/setup-python@v5
+with:
+python-version: "3.11"
+- run: pip install alpaca-py
+- run: python trading_bot.py
+env:
+ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+Store your keys as GitHub repo secrets (Settings → Secrets → Actions), and it’ll trade on a
+schedule with zero servers to maintain.
+Important notes
+This is paper trading (simulated money) by default. Don’t change paper=True to real
+trading until you’ve watched this run for a while and understand exactly what it’s doing.
+SMA crossover is a simple, well-known starter strategy — it is not a strategy proven to
+make money, and it will lose in choppy/sideways markets. Treat this as a learning project
+and framework to build on, not a path to guaranteed returns.
+I’m not a financial advisor, and nothing here is financial advice.
